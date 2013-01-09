@@ -1,6 +1,8 @@
 from bs4 import BeautifulSoup
-from urllib2 import urlopen, URLError, HTTPError
+from urllib2 import Request, urlopen, HTTPError
 import re
+
+from utilities import retry
 
 
 class MOAClient():
@@ -66,6 +68,20 @@ class MOAClient():
     SEE_ALSO_LINK = 'ctl00_ContentPlaceHolder1_Repeater3_ctl00_seelink'
     SEE_ALSO_NAME = 'ctl00_ContentPlaceHolder1_Repeater3_ctl00_Label11'
 
+    # Uncomment the next line to retry in the case of a timeout error.
+    #@retry(ServerError, tries=10, delay=1)
+    def _get_url(self, url):
+        req = Request(url)
+        try:
+            response = urlopen(req)
+        except HTTPError as e:
+            if e.code == 503 or e.code == 504:
+                raise ServerError("The server didn't respond")
+            else:
+                raise
+        else:
+            return response
+
     def _get_field_value(self, soup, field):
         ''' Get the text of the element with the supplied id.'''
         try:
@@ -103,20 +119,16 @@ class MOAClient():
         '''
         details = {}
         barcode = self._parse_id(id)
-        try:
-            response = urlopen(self.MOA_URL.format(barcode))
-        except (URLError, HTTPError):
-            pass
-        else:
-            soup = BeautifulSoup(response.read())
-            for field, id in self.FIELDS.items():
-                details[field] = self._get_field_value(soup, id)
-            for field, id in self.FORM_FIELDS.items():
-                details[field] = self._get_form_field_value(soup, id)
-            details['ww1_file'] = self._get_ww1_file(soup, barcode)
-            details['ww2_file'] = self._get_ww2_file(soup)
-            details['see_also'] = self._get_see_also(soup)
-            details['tumblr_ids'] = self._get_tumblr_ids(soup)
+        response = self._get_url(self.MOA_URL.format(barcode))
+        soup = BeautifulSoup(response.read())
+        for field, id in self.FIELDS.items():
+            details[field] = self._get_field_value(soup, id)
+        for field, id in self.FORM_FIELDS.items():
+            details[field] = self._get_form_field_value(soup, id)
+        details['ww1_file'] = self._get_ww1_file(soup, barcode)
+        details['ww2_file'] = self._get_ww2_file(soup)
+        details['see_also'] = self._get_see_also(soup)
+        details['tumblr_ids'] = self.get_tumblr_ids(soup)
         return details
 
     def _get_ww1_file(self, soup, barcode):
@@ -164,8 +176,14 @@ class MOAClient():
         see_also['name'] = self._get_field_value(soup, self.SEE_ALSO_NAME)
         return see_also
 
-    def _get_tumblr_ids(self, soup):
+    def get_tumblr_ids(self, soup=None, id=None):
         ''' Get id numbers of Tumblr posts in the MoA scrapbook. '''
+        if not soup and not id:
+            raise UsageError('Please provide a valid barcode or url')
+        elif id and not soup:
+            barcode = self._parse_id(id)
+            response = self._get_url(self.MOA_URL.format(barcode))
+            soup = BeautifulSoup(response.read())
         tumblr_ids = []
         for tumblr_ref in soup.find_all('div', 'tumblrRefs'):
             tumblr_ids.append(tumblr_ref.string.split(',')[0].strip())
@@ -176,3 +194,5 @@ class UsageError(Exception):
     pass
 
 
+class ServerError(Exception):
+    pass
