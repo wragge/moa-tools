@@ -12,8 +12,9 @@ class MOAClient():
 
     USAGE:
 
-    client = MOAClient()
-    details = client.get_details(id)
+    import client
+    moa = client.MOAClient()
+    details = moa.get_details(id)
 
     PARAMETERS:
 
